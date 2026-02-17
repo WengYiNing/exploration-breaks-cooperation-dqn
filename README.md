@@ -72,21 +72,12 @@ Each agent observes a 5-dimensional binary state:
 
 Boltzmann exploration:
 
-\[
-\pi(a|s) \propto \exp(Q(s,a)/\tau)
-\]
-
-- Initial τ = 1.0
-- Final τ = 0.10
+- pi(a|s) ∝ exp(Q(s,a) / tau)
 - Linear annealing during training phase
-- Evaluation τ = 0.10
 
 Exploration intensity metric:
 
-\[
-B = \text{mean}(\tau) \text{ over the first half of training}
-\]
-
+- B = mean(tau) over the first half of training
 ---
 
 ## Training Protocol
@@ -119,7 +110,7 @@ Modify `dr_values` in the script to reproduce full experiment curves.
 ### Running
 
 ```bash
-pip install -r requirements.txt
+python "Shared DQN Network.py"
 ```
 
 The script will:
@@ -134,7 +125,7 @@ The script will:
 
 ## Requirements
 
-Create environment:
+Install dependencies:
 ```bash
 pip install -r requirements.txt
 ```
