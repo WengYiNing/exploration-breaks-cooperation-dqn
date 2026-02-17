@@ -130,19 +130,23 @@ The script will:
 
 - Save aggregated results
 
+---
+
 ## Requirements
 
 Create environment:
 ```bash
 pip install -r requirements.txt
 ```
-```txt
-requirements.txt
-torch>=2.0
-numpy>=1.23
-```
+Experiments were conducted on Kaggle with:
 
-GPU is recommended but not required.
+- Python 3.11.13
+- NumPy 1.26.4
+- PyTorch 2.6.0
+
+GPU is recommended but not required. Minor numerical differences may occur across hardware or PyTorch versions.
+
+---
 
 ## Citation
 
