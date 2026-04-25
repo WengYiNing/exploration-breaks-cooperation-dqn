@@ -5,7 +5,6 @@ import torch.nn as nn
 import torch.optim as optim
 import os
 
-# === 隨機數設定 ===
 SEED = 50
 
 def set_global_seed(seed: int):
