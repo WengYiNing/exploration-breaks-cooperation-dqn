@@ -1,155 +1,67 @@
-# How Exploration Breaks Cooperation in Shared-Policy Multi-Agent Reinforcement Learning
+# Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas
 
-Official implementation of the paper:
+This repository contains the source code used to generate the main-text figures for the paper:
 
-> **How Exploration Breaks Cooperation in Shared-Policy Multi-Agent Reinforcement Learning**
-
-This repository contains the PyTorch implementation of the shared-policy Deep Q-Network (DQN) model used to study exploration-induced cooperation collapse in multi-agent reinforcement learning under a spatial Prisoner's Dilemma setting.
-
----
+**Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas**
 
 ## Overview
 
-This project investigates how exploration intensity affects cooperation stability in shared-policy multi-agent reinforcement learning (MARL).
+The code implements a shared-policy Deep Q-Network (DQN) framework for studying cooperation collapse in learning-driven spatial Prisoner's Dilemma environments.
 
-We implement:
+The repository contains experimental and plotting scripts for the main-text figures:
 
-- Shared-policy DQN
-- Double DQN
-- 5-step return
-- Boltzmann (softmax) exploration with temperature annealing
-- Target network updates
-- Gradient clipping
-- Evaluation phase without learning
-- Periodic 2D grid (von Neumann neighborhood)
+- **Figure 1:** Cooperation landscape of the shared-policy DQN over exploration strength (B) and payoff harshness (D_r).
+- **Figure 2:** Empirical collapse boundaries for shared-policy DQN and grouped DQN.
+- **Figure 3:** State-augmentation experiments examining the role of temporal and exploration-related observability.
+- **Figure 4:** Hidden-representation diagnostics based on learned DQN activations.
+- **Figure 5:** Action-value diagnostics, including average Q-value level and Q-gap.
+- **Figure 6:** Topology comparison across grid, modular 4-regular, random 4-regular, and rewired 4-regular networks.
 
-The environment consists of agents placed on a 2D periodic lattice interacting through the Prisoner's Dilemma game.
-
----
-
-## Model Details
-
-### Environment
-
-- Grid topology (periodic boundary)
-- 4-neighbor von Neumann interaction
-- Prisoner's Dilemma payoff:
-  - R = 1
-  - P = 0
-  - S = -Dr
-  - T = 1 + Dr
-
-### State Representation
-
-Each agent observes a 5-dimensional binary state:
-
-- 4 neighbor actions (previous step)
-- 1 self action (previous step)
-
-### Network Architecture
-
-- 1 hidden layer
-- Hidden size: 96
-- Activation: ReLU
-- Output: Q-values for 2 actions (C/D)
-
-### Optimization
-
-- Optimizer: AdamW
-- Learning rate: 1e-4
-- Weight decay: 1e-4
-- Loss: SmoothL1Loss (Huber)
-- Gradient clipping: max_norm = 0.5
-- Replay buffer: 90,000
-- Batch size: 256
-- n-step return: 5
-
-### Target Network
-
-- Hard update every 2000 steps
-
-### Exploration
-
-Boltzmann exploration:
-
-- pi(a|s) ∝ exp(Q(s,a) / tau)
-- Linear annealing during training phase
-
-Exploration intensity metric:
-
-- B = mean(tau) over the first half of training
----
-
-## Training Protocol
-
-- Total steps: 100,000
-- Training phase: 95,000 steps
-- Evaluation phase: 5,000 steps (learning disabled)
-- Cooperation rate measured during evaluation phase
-
----
-
-## Reproducing Experiments
-
-### Seed Configuration
-
-Paper experiments use:
-
-`seed_values = list(range(195, 225))` # 30 seeds
-
-
-### Dr Sweep
-
-Typical sweep range:
-
-Dr ∈ [0.10, 0.40]
-
-
-Modify `dr_values` in the script to reproduce full experiment curves.
-
-### Running
-
-```bash
-python "Shared DQN Network.py"
-```
-
-The script will:
-
-- Train models for each (Dr, seed)
-
-- Output cooperation rates
-
-- Save aggregated results
-
----
+The `experiments/` directory contains scripts for running the simulations, and the `plotting/` directory contains scripts for generating the corresponding figures from the simulation outputs.
 
 ## Requirements
 
-Install dependencies:
+The code was developed with Python 3 and uses the following main packages:
+
+```txt
+numpy
+torch
+matplotlib
+scikit-learn
+umap-learn
+networkx
+```
+
+The required packages can be installed with:
+
 ```bash
 pip install -r requirements.txt
 ```
-Experiments were conducted on Kaggle with:
 
-- Python 3.11.13
-- NumPy 1.26.4
-- PyTorch 2.6.0
+## Plotting scripts and input files
 
-GPU is recommended but not required. Minor numerical differences may occur across hardware or PyTorch versions.
+The plotting scripts assume that the raw simulation outputs have been collected into figure-specific text files. These text files are generated from the corresponding experiment scripts by saving or redirecting the printed simulation outputs.
 
----
+For example, a typical workflow is:
+
+```bash
+python experiments/fig1_experiment_shared_dqn.py > figure1.txt
+python plotting/fig1_plot.py
+```
+
+Each plotting script expects its input file to follow the output format produced by the corresponding experiment script. The expected input filename is specified near the top of each plotting script.
+
+Because the full parameter sweeps require substantial computation, the repository focuses on providing the experiment and plotting code needed to reproduce the main-text figures. Users may rerun the scripts with the same parameter settings and random seeds used in the paper, or modify the parameter lists in the experiment scripts for smaller test runs.
 
 ## Citation
 
-If you use this code, please cite:
+If you use this code, please cite the corresponding paper:
 
 ```bibtex
 @article{weng2026exploration,
-  title   = {How Exploration Breaks Cooperation in Shared-Policy Multi-Agent Reinforcement Learning},
-  author  = {Yi-Ning Weng and Hsuan-Wei Lee},
-  journal = {Under review},
+  title   = {Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas},
+  author  = {Weng, Yi-Ning and Lee, Hsuan-Wei},
+  journal = {TBD},
   year    = {2026}
 }
 ```
-
-
