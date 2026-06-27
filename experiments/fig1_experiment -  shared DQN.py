@@ -16,14 +16,6 @@ def set_global_seed(seed: int):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-def randf():
-    return random.random()
-
-def randi(lim):
-    return random.randrange(lim)
-
-rho = 1.0
-
 R_const = 1.0
 P_const = 0.0
 
@@ -31,7 +23,6 @@ SIZE = 30
 N = SIZE * SIZE
 total_round = 100000
 focus_round = 5000
-train_steps_per_env_step = 1 
 
 class QNet(nn.Module):
     def __init__(self, state_size, action_size, hidden_size):
@@ -42,7 +33,7 @@ class QNet(nn.Module):
 
     def forward(self, x):
         x = self.relu(self.fc1(x))  
-        return self.fc2(x)         
+        return self.fc2(x)          
 
 class SharedDQN:
     def __init__(
@@ -87,7 +78,7 @@ class SharedDQN:
         self.memory_action    = np.full((memory_size,), -1, dtype=np.int64)
         self.memory_reward    = np.zeros((memory_size,), dtype=np.float32)
         self.memory_new_state = np.zeros((memory_size, state_size), dtype=np.float32)
-
+ 
         self.memory_agent = np.full((memory_size,), -1, dtype=np.int32)
         self.memory_step  = np.full((memory_size,), -1, dtype=np.int32)
         self.N_env = N_env
@@ -96,18 +87,18 @@ class SharedDQN:
         self.env_steps = 0
         self.target_update_frequency = target_update_frequency
 
-        # --- Softmax ---
         self.tau_init = float(tau_init)
         self.tau_final = float(tau_final)
         self.tau_anneal_steps = int(tau_anneal_steps)
         self.tau_eval = float(tau_eval)
         self.tau = float(tau_init)
 
-        self.tau_log = [] 
+        self.tau_log = []  
 
         self.n_step = n_step
 
     def argmax_random_tie_break(self, logits: torch.Tensor, eps: float = 1e-8) -> torch.Tensor:
+
         max_per_row = logits.max(dim=1, keepdim=True).values
 
         is_candidate = logits >= (max_per_row - eps)
@@ -167,7 +158,7 @@ class SharedDQN:
 
         index = np.random.randint(0, self.memory_size, size=B)
 
-        offsets = (np.arange(n, dtype=np.int64) * (self.N_env if self.N_env is not None else 0))[None, :] 
+        offsets = (np.arange(n, dtype=np.int64) * (self.N_env if self.N_env is not None else 0))[None, :]  
         index_sequence = (index[:, None] + offsets) % capacity  
 
         steps_sequence  = self.memory_step[index_sequence]  
@@ -186,13 +177,13 @@ class SharedDQN:
             action  = torch.from_numpy(self.memory_action[index_sequence_isNstep[:, 0]]).to(self.device).unsqueeze(1)
             new_state = torch.from_numpy(self.memory_new_state[index_sequence_isNstep[:, -1]]).to(self.device)
 
-            rewards = torch.from_numpy(self.memory_reward[index_sequence_isNstep]).to(self.device) 
+            rewards = torch.from_numpy(self.memory_reward[index_sequence_isNstep]).to(self.device)  
             gammas = torch.pow(torch.full((n,), self.gamma, device=self.device), torch.arange(n, device=self.device)).view(1, n)
             Discount_Reward = (rewards * gammas).sum(dim=1, keepdim=True)  
 
             q_current = self.model(state).gather(1, action)
             with torch.no_grad():
-                q_online_n = self.model(new_state)                    
+                q_online_n = self.model(new_state)                     
                 next_max_action = self.argmax_random_tie_break(q_online_n)
                 q_next = self.target_model(new_state).gather(1, next_max_action)            
                 target = Discount_Reward + (self.gamma ** n) * q_next
@@ -212,8 +203,8 @@ class SharedDQN:
 
             q_current_1step = self.model(state_1step).gather(1, action_1step)
             with torch.no_grad():
-                q_online_1 = self.model(new_state_1step)                          
-                next_max_action_1step = self.argmax_random_tie_break(q_online_1)       
+                q_online_1 = self.model(new_state_1step)                       
+                next_max_action_1step = self.argmax_random_tie_break(q_online_1)    
                 q_next_1step = self.target_model(new_state_1step).gather(1, next_max_action_1step)
                 target_1step = reward_1step + self.gamma * q_next_1step
 
@@ -254,8 +245,7 @@ class SharedDQN:
 
 
 class PDG_Vectorized:
-    def __init__(self, rho, Dr: float, tau_init: float, anneal_step:int):
-        self.rho = rho
+    def __init__(self, Dr: float, tau_init: float, anneal_step:int):
         self.Dr = Dr
         self.cooperation_rates = []
         self.policy = SharedDQN(tau_init=tau_init, tau_anneal_steps=anneal_step)
@@ -340,7 +330,7 @@ class PDG_Vectorized:
 
 
         avg_focus = cooper_cnt / focus_round
-        print(f"Dr: {self.Dr}, rho: {self.rho}, SIZE: {N}, SEED: {SEED}, "
+        print(f"Dr: {self.Dr}, SIZE: {SIZE}, SEED: {SEED}, "
               f"hidden_layer: 1, tau_init: {self.policy.tau_init}, tau_final: {self.policy.tau_final}, "
               f"tau_anneal_steps: {self.policy.tau_anneal_steps}, B:{B_mean_tau:.6f}, result: {avg_focus:.6f}")
 
@@ -354,7 +344,6 @@ class PDG_Vectorized:
 
 def sweep_Dr(
     dr_values=None,
-    rho_val=1.0,
     seed_values=None, 
     tau_init_values=None,  
     anneal_steps = None
@@ -362,9 +351,9 @@ def sweep_Dr(
     if dr_values is None:
         dr_values = np.round(np.arange(0.10, 0.40 + 1e-9, 0.01), 3)
     if seed_values is None:
-        seed_values = list(range(195, 225))
+        seed_values = list(range(195, 210))
     if tau_init_values is None:
-        tau_init_values = [0.127, 0.193, 0.260, 0.327, 0.393, 0.460, 0.527, 0.593, 0.660, 0.727]
+        tau_init_values = [0.100, 0.193, 0.260, 0.327, 0.393, 0.460, 0.527, 0.593, 0.660, 0.727, 0.793]
     if anneal_steps is None:
         anneal_steps = [95000]
 
@@ -375,6 +364,9 @@ def sweep_Dr(
                     global SEED
                     SEED = seed
                     set_global_seed(SEED)
-                    pdg = PDG_Vectorized(rho=rho_val, Dr=dr, tau_init=tau_init, anneal_step = anneal)
+                    pdg = PDG_Vectorized(Dr=dr, tau_init=tau_init, anneal_step = anneal)
                     pdg.run()
-sweep_Dr()
+
+
+if __name__ == "__main__":
+    sweep_Dr()
