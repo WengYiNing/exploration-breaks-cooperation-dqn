@@ -1,8 +1,8 @@
-# Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas
+# Shared Value Representations Drive Exploration-Induced Cooperation Collapse in Spatial Social Dilemmas
 
 This repository contains the source code used to generate the main-text figures for the paper:
 
-**Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas**
+**Shared Value Representations Drive Exploration-Induced Cooperation Collapse in Spatial Social Dilemmas**
 
 ## Overview
 
@@ -59,7 +59,7 @@ If you use this code, please cite the corresponding paper:
 
 ```bibtex
 @article{weng2026exploration,
-  title   = {Exploration-Induced Cooperation Collapse in Deep Reinforcement Learning Driven Spatial Dilemmas},
+  title   = {Shared Value Representations Drive Exploration-Induced Cooperation Collapse in Spatial Social Dilemmas},
   author  = {Weng, Yi-Ning and Lee, Hsuan-Wei},
   journal = {TBD},
   year    = {2026}
