@@ -15,7 +15,10 @@ paths = [
 
 def parse_file(path: Path, label: str) -> pd.DataFrame:
     pat = re.compile(
-        r"SEED:\s*(\d+).*?B:\s*([0-9]*\.?[0-9]+).*?result:\s*([0-9]*\.?[0-9]+)"
+        r"Dr:\s*([0-9]*\.?[0-9]+).*?"
+        r"SEED:\s*(\d+).*?"
+        r"B:\s*([0-9]*\.?[0-9]+).*?"
+        r"result:\s*([0-9]*\.?[0-9]+)"
     )
     rows = []
 
@@ -23,15 +26,19 @@ def parse_file(path: Path, label: str) -> pd.DataFrame:
         for line in f:
             m = pat.search(line)
             if m:
-                seed = int(m.group(1))
-                B = float(m.group(2))
-                coop = float(m.group(3))
-                rows.append((label, seed, B, coop))
+                Dr = float(m.group(1))
+                seed = int(m.group(2))
+                B = float(m.group(3))
+                coop = float(m.group(4))
+                rows.append((label, Dr, seed, B, coop))
 
     if not rows:
         raise ValueError(f"No matched rows found in file: {path}")
 
-    return pd.DataFrame(rows, columns=["topology", "seed", "B", "coop"])
+    return pd.DataFrame(
+        rows,
+        columns=["topology", "Dr", "seed", "B", "coop"]
+    )
 
 
 dfs = []
@@ -39,6 +46,10 @@ for label, path in paths:
     dfs.append(parse_file(path, label))
 
 df = pd.concat(dfs, ignore_index=True)
+df = df[(df["Dr"] - 0.25).abs() < 1e-6].copy()
+
+if df.empty:
+    raise ValueError("No data found for Dr = 0.25")
 
 Bs_by_topology = {
     topology: set(df[df["topology"] == topology]["B"].unique())
