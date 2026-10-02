@@ -1,102 +1,152 @@
-import re
+import os
 from pathlib import Path
-
-import pandas as pd
+import re
+from collections import defaultdict
+import numpy as np
 import matplotlib.pyplot as plt
 
-
-paths = [
-    ("Rewired 4-regular", Path("rewired 4-regular.txt")),
-    ("Grid", Path("grid.txt")),
-    ("Random 4-regular", Path("random 4-regular.txt")),
-    ("Modular 4-regular", Path("modular 4-regular.txt")),
-]
+QMEAN_ROOT = Path("Figure 5 Q mean")
+QGAP_ROOT  = Path("Figure 5 Q gap")
 
 
-def parse_file(path: Path, label: str) -> pd.DataFrame:
-    pat = re.compile(
-        r"Dr:\s*([0-9]*\.?[0-9]+).*?"
-        r"SEED:\s*(\d+).*?"
-        r"B:\s*([0-9]*\.?[0-9]+).*?"
-        r"result:\s*([0-9]*\.?[0-9]+)"
-    )
-    rows = []
-
-    with path.open("r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            m = pat.search(line)
-            if m:
-                Dr = float(m.group(1))
-                seed = int(m.group(2))
-                B = float(m.group(3))
-                coop = float(m.group(4))
-                rows.append((label, Dr, seed, B, coop))
-
-    if not rows:
-        raise ValueError(f"No matched rows found in file: {path}")
-
-    return pd.DataFrame(
-        rows,
-        columns=["topology", "Dr", "seed", "B", "coop"]
-    )
-
-
-dfs = []
-for label, path in paths:
-    dfs.append(parse_file(path, label))
-
-df = pd.concat(dfs, ignore_index=True)
-df = df[(df["Dr"] - 0.25).abs() < 1e-6].copy()
-
-if df.empty:
-    raise ValueError("No data found for Dr = 0.25")
-
-Bs_by_topology = {
-    topology: set(df[df["topology"] == topology]["B"].unique())
-    for topology in df["topology"].unique()
-}
-
-common_B = sorted(set.intersection(*Bs_by_topology.values()))
-
-df_common = df[df["B"].isin(common_B)].copy()
-
-agg = (
-    df_common.groupby(["topology", "B"])["coop"]
-    .agg(mean="mean", std="std", n="count")
-    .reset_index()
+pattern_B = re.compile(
+    r".*_SIZE(?P<size>\d+)"
+    r"_SEED(?P<seed>\d+)"
+    r"_Dr(?P<dr>[\d.]+)"
+    r"_tauinit_[\d.]+"
+    r"_taufinal_(?P<tau_final>[\d.]+)"
+    r"_anneal_(?P<anneal>\d+)"
+    r"_B_(?P<b>[\d.]+)\.txt"
 )
 
-agg["ci95"] = 1.96 * agg["std"] / (agg["n"] ** 0.5)
+def load_statistics(root, label):
+    by_B = defaultdict(dict)
+    used_data = set()
 
-plt.figure(figsize=(14, 7))
+    for file in root.iterdir():
+        if not file.is_file() or file.suffix != ".txt":
+            continue
 
-for topology in agg["topology"].unique():
-    sub = agg[agg["topology"] == topology].sort_values("B")
-    line, = plt.plot(
-        sub["B"],
-        sub["mean"],
-        marker="o",
-        label=topology,
-        linewidth=8,
-        markersize=16,
-    )
+        m = pattern_B.fullmatch(file.name)
+        if not m:
+            continue
 
-    plt.fill_between(
-        sub["B"],
-        sub["mean"] - sub["ci95"],
-        sub["mean"] + sub["ci95"],
-        alpha=0.05,
-        color=line.get_color(),
-    )
+        size = int(m.group("size"))
+        seed = int(m.group("seed"))
+        dr = float(m.group("dr"))
+        b = float(m.group("b"))
+        tau_final = float(m.group("tau_final"))
+        anneal = int(m.group("anneal"))
 
-plt.xlabel("B", fontsize=32)
-plt.ylabel("Cooperation Level", fontsize=32)
+        if (size != 30 or abs(dr - 0.25) > 1e-8
+                or abs(tau_final - 0.1) > 1e-8
+                or anneal != 95000):
+            continue
 
-plt.xticks(fontsize=32)
-plt.yticks(fontsize=32)
-plt.legend(fontsize=24, bbox_to_anchor=(1.00, -0.04), loc="lower left")
+        try:
+            val = float(file.read_text().strip())
+        except Exception as e:
+            print(f"Warning: skipped {file}: {e}")
+            continue
+
+        if seed in by_B[b]:
+            if not np.isclose(by_B[b][seed], val, rtol=0, atol=1e-6):
+                raise ValueError(
+                    f"Conflicting results: B={b}, seed={seed}"
+                )
+            continue
+
+        by_B[b][seed] = val
+        used_data.add((seed, dr, b))
+
+    if not used_data:
+        raise ValueError(f"No matching data found in {root}")
+
+    print(f"\n========== {label} Data Check ==========")
+    print(f"Total unique seeds: {len({s for s, d, b in used_data})}")
+    print(f"Total Dr values: {len({d for s, d, b in used_data})}")
+    print(f"Total B values: {len({b for s, d, b in used_data})}")
+
+    for b in sorted(by_B):
+        print(f"B={b:.6f}: {len(by_B[b])} seeds")
+
+    sorted_B = sorted(by_B)
+    means = [np.mean(list(by_B[b].values())) for b in sorted_B]
+    stds = [
+        np.std(list(by_B[b].values()), ddof=1)
+        for b in sorted_B
+    ]
+    ci95 = [
+        1.96 * std / np.sqrt(len(by_B[b]))
+        for b, std in zip(sorted_B, stds)
+    ]
+
+    return sorted_B, means, stds, ci95
+
+
+sorted_B_qmean, mean_qmean, std_qmean, ci95_qmean = (
+    load_statistics(QMEAN_ROOT, "Q-mean")
+)
+
+sorted_B_qgap, mean_qgap, std_qgap, ci95_qgap = (
+    load_statistics(QGAP_ROOT, "Q-gap")
+)
+
+
+plt.figure(figsize=(12, 5))
+
+ax1 = plt.subplot(1, 2, 1)
+ax1.plot(
+    sorted_B_qmean, mean_qmean,
+    marker="o", linewidth=5, color="tab:blue", markersize=11
+)
+ax1.fill_between(
+    sorted_B_qmean,
+    np.array(mean_qmean) - np.array(ci95_qmean),
+    np.array(mean_qmean) + np.array(ci95_qmean),
+    color="tab:blue",
+    alpha=0.08
+)
+ax1.set_ylim(0, 55)
+ax1.set_xlabel("B", fontsize=24)
+ax1.set_ylabel("Average Q-mean", fontsize=24, labelpad=10)
+
+ax2 = plt.subplot(1, 2, 2)
+ax2.plot(
+    sorted_B_qgap, mean_qgap,
+    marker="o", linewidth=5, color="tab:orange", markersize=11
+)
+ax2.fill_between(
+    sorted_B_qgap,
+    np.array(mean_qgap) - np.array(ci95_qgap),
+    np.array(mean_qgap) + np.array(ci95_qgap),
+    color="tab:orange",
+    alpha=0.08
+)
+ax2.set_ylim(0, 75)
+ax2.set_xlabel("B", fontsize=24)
+ax2.set_ylabel("Average Q-gap", fontsize=24, labelpad=10)
+
+ax1.tick_params(axis='both', labelsize=24)  
+ax2.tick_params(axis='both', labelsize=24)   
+
+ax1.text(
+    0.02, 1.1, "(a)",
+    transform=ax1.transAxes,
+    fontsize=24,
+    va="top",
+    ha="left"
+)
+
+ax2.text(
+    0.02, 1.1, "(b)",
+    transform=ax2.transAxes,
+    fontsize=24,
+    va="top",
+    ha="left"
+)
 
 plt.tight_layout()
-plt.savefig(OUTPUT_DIR / "figure6_topology_comparison.png", dpi=300)
-plt.savefig(OUTPUT_DIR / "figure6_topology_comparison.pdf")
+plt.savefig("figure5_q_statistics.png", dpi=300, bbox_inches="tight")
+plt.savefig("figure5_q_statistics.pdf", bbox_inches="tight")
 plt.show()

@@ -74,11 +74,14 @@ def read_shared_rows(path):
     return rows
 
 def average_by_B_Dr_grouped(rows):
-
-    bd_to_vals = defaultdict(list)
+    seed_to_vals = defaultdict(list)
 
     for b, dr, seed, gsz, res in rows:
-        bd_to_vals[(b, dr)].append(res)
+        seed_to_vals[(b, dr, seed)].append(res)
+
+    bd_to_vals = defaultdict(list)
+    for (b, dr, seed), vals in seed_to_vals.items():
+        bd_to_vals[(b, dr)].append(float(np.mean(vals)))
 
     b_to_series = defaultdict(list)
     for (b, dr), vals in bd_to_vals.items():
@@ -87,12 +90,19 @@ def average_by_B_Dr_grouped(rows):
     return b_to_series
 
 def average_by_B_Dr_shared(rows):
-    bd_to_vals = defaultdict(list)
+    seed_to_vals = defaultdict(list)
+
     for b, dr, seed, res in rows:
-        bd_to_vals[(b, dr)].append(res)
+        seed_to_vals[(b, dr, seed)].append(res)
+
+    bd_to_vals = defaultdict(list)
+    for (b, dr, seed), vals in seed_to_vals.items():
+        bd_to_vals[(b, dr)].append(float(np.mean(vals)))
+
     b_to_series = defaultdict(list)
     for (b, dr), vals in bd_to_vals.items():
         b_to_series[b].append((dr, float(np.mean(vals))))
+
     return b_to_series
 
 def filter_b_to_series(b_to_series, selected_b, tol=1e-5):
@@ -177,8 +187,34 @@ def build_df_drstar(b_to_series, boundary):
     return df_star.reset_index(drop=True)
 
 def compute_all():
-    rows_grouped = read_grouped_rows(GROUPED_FILE)
-    rows_shared  = read_shared_rows(SHARED_FILE)
+    rows_grouped = [
+        row for row in read_grouped_rows(GROUPED_FILE)
+        if row[3] == 90
+        and DR_LO <= row[1] <= DR_HI
+        and any(abs(row[0] - b) <= B_TOL for b in SELECTED_B)
+    ]
+
+    rows_shared = [
+        row for row in read_shared_rows(SHARED_FILE)
+        if DR_LO <= row[1] <= DR_HI
+        and any(abs(row[0] - b) <= B_TOL for b in SELECTED_B)
+    ]
+
+    print("\n========== Figure 2 Data Check ==========")
+
+    for name, rows in [
+        ("Shared DQN", rows_shared),
+        ("Grouped DQN", rows_grouped),
+    ]:
+        print(f"\n{name}")
+        print(f"Total unique seeds: {len({r[2] for r in rows})}")
+        print(f"Total Dr values: {len({r[1] for r in rows})}")
+        print(f"Total B values: {len({r[0] for r in rows})}")
+
+        for b in sorted({r[0] for r in rows}):
+            for dr in sorted({r[1] for r in rows if r[0] == b}):
+                seeds = {r[2] for r in rows if r[0] == b and r[1] == dr}
+                print(f"B={b:.6f}, Dr={dr:.2f}: {len(seeds)} seeds")
 
     b2s_grouped = average_by_B_Dr_grouped(rows_grouped)
     b2s_shared  = average_by_B_Dr_shared(rows_shared)
@@ -198,20 +234,6 @@ def compute_all():
         "df_s_star": df_s_star,
         "df_g_star": df_g_star,
     }
-
-if __name__ == "__main__":
-    data = compute_all(return_debug=True)
-
-    df_s_star = data["df_s_star"]
-    df_g_star = data["df_g_star"]
-
-    print("\n========== Shared DQN ==========")
-    print(df_s_star.to_string(index=False))
-
-    print("\n========== Grouped DQN ==========")
-    print(df_g_star.to_string(index=False))
-
-
 
 data = compute_all()
 
@@ -337,6 +359,9 @@ axs[1].text(
 fig.supxlabel("B", fontsize=30)
 
 fig.tight_layout()
+
 OUTPUT_FILE = Path("figures/figure2_boundary.png")
+OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
+
 fig.savefig(OUTPUT_FILE, dpi=300, bbox_inches="tight")
 plt.show()

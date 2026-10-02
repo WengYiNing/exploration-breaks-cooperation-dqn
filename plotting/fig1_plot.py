@@ -51,6 +51,26 @@ else:
     b_in_range = sorted([b for b in all_Bs if (B_MIN - EPS) <= b <= (B_MAX + EPS)])
     all_dr = all_Drs
 
+print("\n========== Figure 1 Data Check ==========")
+
+used_keys = {
+    (b, dr, seed)
+    for b, dr, seed in by_seed
+    if b in b_in_range and dr in all_dr
+}
+
+print(f"Total unique seeds: {len({seed for b, dr, seed in used_keys})}")
+print(f"Total Dr values: {len({dr for b, dr, seed in used_keys})}")
+print(f"Total B values: {len({b for b, dr, seed in used_keys})}")
+
+print("\nSeed counts by B and Dr:")
+
+for b in b_in_range:
+    for dr in all_dr:
+        n = sum(1 for bb, dd, seed in used_keys
+                if bb == b and dd == dr)
+        print(f"B={b:.6f}, Dr={dr:.2f}: {n} seeds")
+
 M = np.full((len(b_in_range), len(all_dr)), np.nan)
 for i, b in enumerate(b_in_range):
     for j, dr in enumerate(all_dr):

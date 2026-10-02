@@ -7,132 +7,14 @@ import os
 
 SEED = 50
 
-def generate_degree_preserving_rewired_4_regular_neighbors(
-    SIZE: int,
-    seed: int = 0,
-    nswap_multiplier: int = 10,
-    max_tries_factor: int = 100,
-    require_connected: bool = True,
-) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    N_local = SIZE * SIZE
+STATE_MODE = "both"
 
-    def node_id(i, j):
-        return i * SIZE + j
-
-    neighbors = [set() for _ in range(N_local)]
-
-    for i in range(SIZE):
-        for j in range(SIZE):
-            u = node_id(i, j)
-
-            v_right = node_id(i, (j + 1) % SIZE)
-            v_down  = node_id((i + 1) % SIZE, j)
-
-            neighbors[u].add(v_right)
-            neighbors[v_right].add(u)
-
-            neighbors[u].add(v_down)
-            neighbors[v_down].add(u)
-
-    edges = []
-    for u in range(N_local):
-        for v in neighbors[u]:
-            if u < v:
-                edges.append((u, v))
-
-    edges = list(edges)
-    E = len(edges)
-
-    nswap = int(nswap_multiplier * E)
-    max_tries = int(max_tries_factor * nswap)
-
-    def has_edge(a, b):
-        return b in neighbors[a]
-
-    def remove_edge(a, b):
-        neighbors[a].remove(b)
-        neighbors[b].remove(a)
-
-    def add_edge(a, b):
-        neighbors[a].add(b)
-        neighbors[b].add(a)
-
-    def is_connected():
-        seen = np.zeros(N_local, dtype=bool)
-        stack = [0]
-        seen[0] = True
-
-        while stack:
-            u = stack.pop()
-            for v in neighbors[u]:
-                if not seen[v]:
-                    seen[v] = True
-                    stack.append(v)
-
-        return bool(seen.all())
-
-    successful_swaps = 0
-    tries = 0
-
-    while successful_swaps < nswap and tries < max_tries:
-        tries += 1
-
-        idx1, idx2 = rng.choice(E, size=2, replace=False)
-        a, b = edges[idx1]
-        c, d = edges[idx2]
-
-        if len({a, b, c, d}) < 4:
-            continue
-
-        if rng.random() < 0.5:
-            new1 = (a, d)
-            new2 = (c, b)
-        else:
-            new1 = (a, c)
-            new2 = (b, d)
-
-        x, y = new1
-        p, q = new2
-
-        if x == y or p == q:
-            continue
-
-        x, y = (x, y) if x < y else (y, x)
-        p, q = (p, q) if p < q else (q, p)
-
-        if (x, y) == (p, q):
-            continue
-
-        if has_edge(x, y) or has_edge(p, q):
-            continue
-
-        remove_edge(a, b)
-        remove_edge(c, d)
-
-        add_edge(x, y)
-        add_edge(p, q)
-
-        edges[idx1] = (x, y)
-        edges[idx2] = (p, q)
-
-        successful_swaps += 1
-
-    if successful_swaps < nswap:
-        print(
-            f"Warning: only completed {successful_swaps}/{nswap} double-edge swaps "
-            f"after {tries} tries."
-        )
-
-    if require_connected and not is_connected():
-        raise RuntimeError("Degree-preserving small-world graph became disconnected.")
-
-    for i in range(N_local):
-        if len(neighbors[i]) != 4:
-            raise RuntimeError(f"Degree check failed at node {i}: deg={len(neighbors[i])}")
-
-    return np.array([sorted(list(neighbors[i])) for i in range(N_local)], dtype=np.int32)
-
+STATE_SIZE = {
+    "baseline": 5,
+    "tau": 6,
+    "progress": 6,
+    "both": 7,
+}[STATE_MODE]
 
 def set_global_seed(seed: int):
     random.seed(seed)
@@ -146,7 +28,7 @@ def set_global_seed(seed: int):
 R_const = 1.0
 P_const = 0.0
 
-SIZE = 30
+SIZE = 50
 N = SIZE * SIZE
 total_round = 100000
 focus_round = 5000
@@ -156,24 +38,23 @@ class QNet(nn.Module):
         super().__init__()
 
         self.fc1 = nn.Linear(state_size, hidden_size)
-
         self.fc2 = nn.Linear(hidden_size, action_size)
 
         self.relu = nn.ReLU()
 
     def forward(self, x):
         x = self.relu(self.fc1(x))  
-        return self.fc2(x)         
-    
+        return self.fc2(x)          
+
 class SharedDQN:
     def __init__(
         self,
         N_env = N,
-        state_size=5,
+        state_size=STATE_SIZE,
         action_size=2,
         lr=1e-4,
         gamma=0.99,
-        memory_size=90_000,
+        memory_size=250_000,
         batch_size=256,
         target_update_frequency=2000,
         device=None,
@@ -222,8 +103,7 @@ class SharedDQN:
         self.tau_anneal_steps = int(tau_anneal_steps)
         self.tau_eval = float(tau_eval)
         self.tau = float(tau_init)
-
-        self.tau_log = []  
+        self.tau_log = [] 
 
         self.n_step = n_step
 
@@ -242,19 +122,17 @@ class SharedDQN:
 
     @torch.no_grad()
     def action_batch(self, states_np: np.ndarray) -> np.ndarray:
-
         states_t = torch.from_numpy(states_np).float().to(self.device, non_blocking=True)
-        q = self.model(states_t) 
+        q = self.model(states_t)  
 
         q_centered = q - q.max(dim=1, keepdim=True).values
         logits = q_centered / max(self.tau, 1e-6)
-        probabilities = torch.softmax(logits, dim=1) 
+        probabilities = torch.softmax(logits, dim=1)  
 
         actions = torch.multinomial(probabilities, num_samples=1).squeeze(1).cpu().numpy()
         return actions.astype(np.int64)
     
     def _anneal_tau(self):
- 
         if self.env_steps <= self.tau_anneal_steps:
             ratio = self.env_steps / max(1, self.tau_anneal_steps)
             self.tau = self.tau_init + (self.tau_final - self.tau_init) * ratio
@@ -262,7 +140,6 @@ class SharedDQN:
             self.tau = self.tau_final
 
     def remember_batch(self, states, actions, rewards, next_states):
-
         B = states.shape[0]
 
         index = (np.arange(B) + self.memory_ptr) % self.memory_capacity
@@ -279,7 +156,6 @@ class SharedDQN:
         self.memory_size = int(min(self.memory_size + B, self.memory_capacity))
 
     def replay(self):
-
         if self.memory_size < max(self.batch_size, self.warmup_steps):
             return
 
@@ -295,7 +171,7 @@ class SharedDQN:
         offsets = (np.arange(n, dtype=np.int64) * (self.N_env if self.N_env is not None else 0))[None, :] 
         index_sequence = (index[:, None] + offsets) % capacity  
 
-        steps_sequence  = self.memory_step[index_sequence]  
+        steps_sequence  = self.memory_step[index_sequence]   
         agents_sequence = self.memory_agent[index_sequence]  
 
         written_mask = (self.memory_step[index_sequence] != -1)
@@ -305,19 +181,19 @@ class SharedDQN:
 
         if full_valid.any():
             isNstep = np.where(full_valid)[0]
-            index_sequence_isNstep = index_sequence[isNstep] 
+            index_sequence_isNstep = index_sequence[isNstep]  
 
             state  = torch.from_numpy(self.memory_state[index_sequence_isNstep[:, 0]]).to(self.device)
             action  = torch.from_numpy(self.memory_action[index_sequence_isNstep[:, 0]]).to(self.device).unsqueeze(1)
             new_state = torch.from_numpy(self.memory_new_state[index_sequence_isNstep[:, -1]]).to(self.device)
 
-            rewards = torch.from_numpy(self.memory_reward[index_sequence_isNstep]).to(self.device) 
+            rewards = torch.from_numpy(self.memory_reward[index_sequence_isNstep]).to(self.device)  
             gammas = torch.pow(torch.full((n,), self.gamma, device=self.device), torch.arange(n, device=self.device)).view(1, n)
             Discount_Reward = (rewards * gammas).sum(dim=1, keepdim=True) 
 
             q_current = self.model(state).gather(1, action)
             with torch.no_grad():
-                q_online_n = self.model(new_state)                      
+                q_online_n = self.model(new_state)                     
                 next_max_action = self.argmax_random_tie_break(q_online_n)
                 q_next = self.target_model(new_state).gather(1, next_max_action)            
                 target = Discount_Reward + (self.gamma ** n) * q_next
@@ -382,40 +258,66 @@ class PDG_Vectorized:
     def __init__(self, Dr: float, tau_init: float, anneal_step:int):
         self.Dr = Dr
         self.cooperation_rates = []
-        self.policy = SharedDQN(tau_init=tau_init, tau_anneal_steps=anneal_step)
+        self.policy = SharedDQN(
+            state_size=STATE_SIZE,
+            tau_init=tau_init,
+            tau_anneal_steps=anneal_step
+        )
 
         R = R_const
         P = P_const
         S = -self.Dr
         T = 1.0 + self.Dr
 
-        self.neighbor = generate_degree_preserving_rewired_4_regular_neighbors(
-            SIZE=SIZE,
-            seed=SEED,
-            nswap_multiplier=0.1,
-            max_tries_factor=100,
-            require_connected=True,
-        )
+        grid = np.arange(N, dtype=np.int32).reshape(SIZE, SIZE)
+        up    = np.roll(grid,  +1, axis=0).ravel() 
+        right = np.roll(grid,  -1, axis=1).ravel()  
+        down  = np.roll(grid,  -1, axis=0).ravel()  
+        left  = np.roll(grid,  +1, axis=1).ravel() 
+        self.neighbor = np.stack([up, right, down, left], axis=1) 
 
         self.payoff = np.array([[R, S],
                                 [T, P]], dtype=np.float32)
 
         self.new_action  = np.random.randint(0, 2, size=N, dtype=np.int8)                
 
-        self.last_state = np.zeros((N, 5), dtype=np.float32) 
-        self.new_state  = np.zeros((N, 5), dtype=np.float32)  
+        self.last_state = np.zeros((N, STATE_SIZE), dtype=np.float32)
+        self.new_state = np.zeros((N, STATE_SIZE), dtype=np.float32)
         self.rewards    = np.zeros((N,),  dtype=np.float32)  
 
         self.compute_states()   
         
     def compute_states(self):
-
         neighbor_new_actions = self.new_action[self.neighbor]
         self.new_state[:, :4] = neighbor_new_actions.astype(np.float32)   
         self.new_state[:,  4] = self.new_action.astype(np.float32)
 
-    def compute_rewards(self):
+        if STATE_MODE in ("tau", "both"):
+            if self.policy.env_steps < self.policy.tau_anneal_steps:
+                next_tau = self.policy.tau_init - (
+                    (self.policy.tau_init - self.policy.tau_final)
+                    * ((self.policy.env_steps + 1) / self.policy.tau_anneal_steps)
+                )
+            else:
+                next_tau = self.policy.tau_final
 
+            denom = max(1e-6, self.policy.tau_init - self.policy.tau_final)
+            tau_ratio_next = (next_tau - self.policy.tau_final) / denom
+            tau_ratio_next = float(np.clip(tau_ratio_next, 0.0, 1.0))
+
+            self.new_state[:, 5] = tau_ratio_next
+
+        if STATE_MODE in ("progress", "both"):
+            progress = min(
+                1.0,
+                (self.policy.env_steps + 1)
+                / max(1, self.policy.tau_anneal_steps)
+            )
+
+            index = 6 if STATE_MODE == "both" else 5
+            self.new_state[:, index] = progress
+
+    def compute_rewards(self):
         me = self.new_action.astype(np.int64)           
         neighbor_new_actions = self.new_action[self.neighbor].astype(np.int64)  
 
@@ -424,7 +326,6 @@ class PDG_Vectorized:
         self.rewards = reward
 
     def compute_coop_rate(self):
-
         return (self.new_action == 0).mean()
 
     def run(self):
@@ -468,17 +369,26 @@ class PDG_Vectorized:
 
 
         avg_focus = cooper_cnt / focus_round
-        print(f"Dr: {self.Dr}, SIZE: {SIZE}, SEED: {SEED}, "
-              f"hidden_layer: 1, tau_init: {self.policy.tau_init}, tau_final: {self.policy.tau_final}, "
-              f"tau_anneal_steps: {self.policy.tau_anneal_steps}, B:{B_mean_tau:.6f}, result: {avg_focus:.6f}")
+
+        print(
+            f"Dr: {self.Dr}, SIZE: {SIZE}, SEED: {SEED}, "
+            f"state_mode: {STATE_MODE}, state_size: {STATE_SIZE}, "
+            f"hidden_layer: 1, tau_init: {self.policy.tau_init}, "
+            f"tau_final: {self.policy.tau_final}, "
+            f"tau_anneal_steps: {self.policy.tau_anneal_steps}, "
+            f"B:{B_mean_tau:.6f}, result: {avg_focus:.6f}"
+        )
 
         os.makedirs("results", exist_ok=True)
+
         filename = (
-            f"results/coop_SIZE{SIZE}_SEED{SEED}_hidden_layer1_Dr{self.Dr}"
+            f"results/coop_{STATE_MODE}_SIZE{SIZE}_SEED{SEED}_hidden_layer1_Dr{self.Dr}"
             f"_tauinit_{self.policy.tau_init}_taufinal_{self.policy.tau_final}"
             f"_anneal_{self.policy.tau_anneal_steps}_B_{B_mean_tau:.6f}.txt"
         )
+
         np.savetxt(filename, np.array(self.cooperation_rates), fmt="%.6f")
+
 
 def sweep_Dr(
     dr_values=None,
@@ -504,5 +414,6 @@ def sweep_Dr(
                     set_global_seed(SEED)
                     pdg = PDG_Vectorized(Dr=dr, tau_init=tau_init, anneal_step = anneal)
                     pdg.run()
+
 if __name__ == "__main__":
     sweep_Dr()

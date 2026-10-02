@@ -1,83 +1,414 @@
+# -*- coding: utf-8 -*-
+
 import re
-import pandas as pd
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-BASE_DIR = Path("figure3")
+import pandas as pd
+import matplotlib.pyplot as plt
 
-INPUT_FILES = {
-    "τ + Anneal (7 states)": BASE_DIR / "state size=7, tau+anneal.txt",
-    "τ (6 states)": BASE_DIR / "state size=6, tau.txt",
-    "Anneal (6 states)": BASE_DIR / "state size=6, anneal.txt",
-    "Baseline": BASE_DIR / "baseline.txt"
+DATA_DIR = Path("figure3")
+
+paths = [
+    ("100 Groups, Buffer = 900", DATA_DIR / "100groups_buffer900.txt"),
+    ("100 Groups, Buffer = 9000", DATA_DIR / "100groups_buffer9000.txt"),
+    ("10 Groups, Buffer = 9000", DATA_DIR / "10groups_buffer9000.txt"),
+    ("Shared DQN, Buffer = 90000", DATA_DIR / "shared_buffer90000.txt"),
+]
+
+TARGET_DR = 0.25
+
+GROUPED_SEEDS = set(range(195, 200))  # 5 seeds
+SHARED_SEEDS = set(range(195, 210))   # 15 seeds
+
+SHARED_LABEL = "Shared DQN, Buffer = 90000"
+
+TARGET_B = [
+    0.120250,
+    0.219999,
+    0.319748,
+    0.420248,
+    0.519997,
+    0.619746,
+]
+
+def parse_file(path: Path, label: str) -> pd.DataFrame:
+    pattern = re.compile(
+        r"Dr:\s*([0-9]*\.?[0-9]+).*?"
+        r"SEED:\s*(\d+).*?"
+        r"B:\s*([0-9]*\.?[0-9]+).*?"
+        r"result:\s*([0-9]*\.?[0-9]+)"
+    )
+
+    rows = []
+
+    with path.open(
+        "r",
+        encoding="utf-8",
+        errors="ignore"
+    ) as f:
+
+        for line in f:
+
+            match = pattern.search(line)
+
+            if match:
+
+                Dr = float(match.group(1))
+                seed = int(match.group(2))
+                B = float(match.group(3))
+                coop = float(match.group(4))
+
+                if label != SHARED_LABEL:
+                    expected_groups, expected_group_size, expected_buffer = {
+                        "10 Groups, Buffer = 9000": (10, 90, 9000),
+                        "100 Groups, Buffer = 9000": (100, 9, 9000),
+                        "100 Groups, Buffer = 900": (100, 9, 900),
+                    }[label]
+
+                    expected_fields = {
+                        "groups": expected_groups,
+                        "group_size": expected_group_size,
+                        "replay_size": expected_buffer,
+                    }
+
+                    matches_config = True
+
+                    for field, expected in expected_fields.items():
+                        field_match = re.search(rf"\b{field}:\s*(\d+)", line)
+
+                        if field_match and int(field_match.group(1)) != expected:
+                            matches_config = False
+                            break
+
+                    if not matches_config:
+                        continue
+
+                rows.append(
+                    (
+                        label,
+                        Dr,
+                        seed,
+                        B,
+                        coop,
+                    )
+                )
+
+    if not rows:
+        raise ValueError(
+            f"No matched rows found in file: {path}"
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "configuration",
+            "Dr",
+            "seed",
+            "B",
+            "coop",
+        ],
+    )
+
+dfs = []
+
+for label, path in paths:
+
+    df_temp = parse_file(
+        path,
+        label
+    )
+
+    print(
+        f"{label}: "
+        f"{len(df_temp)} total rows loaded"
+    )
+
+    dfs.append(
+        df_temp
+    )
+
+
+df = pd.concat(
+    dfs,
+    ignore_index=True,
+)
+df = df[
+    df["Dr"].round(6)
+    == round(TARGET_DR, 6)
+].copy()
+
+df = df[
+    (
+        (df["configuration"] == SHARED_LABEL)
+        & df["seed"].isin(SHARED_SEEDS)
+    )
+    |
+    (
+        (df["configuration"] != SHARED_LABEL)
+        & df["seed"].isin(GROUPED_SEEDS)
+    )
+].copy()
+
+target_B_rounded = {
+    round(B, 6)
+    for B in TARGET_B
 }
 
-pattern = re.compile(
-    r"B:\s*([-+]?\d*\.?\d+).*?result:\s*([-+]?\d*\.?\d+)",
-    re.IGNORECASE
+df = df[
+    df["B"].round(6).isin(
+        target_B_rounded
+    )
+].copy()
+
+print(
+    "\n========================================"
+)
+print(
+    "Available B values after filtering"
+)
+print(
+    "========================================"
 )
 
-plt.figure(figsize=(14, 7), dpi=150)
+for configuration in df[
+    "configuration"
+].unique():
 
-for label, file_path in INPUT_FILES.items():
-    records = []
-    with file_path.open("r", encoding="utf-8") as f:
-        for line in f:
-            m = pattern.search(line)
-            if m:
-                b = round(float(m.group(1)), 2)  
-                result = float(m.group(2))
-                records.append({"B": b, "result": result})
+    sub = df[
+        df["configuration"]
+        == configuration
+    ]
 
-    df = pd.DataFrame(records)
+    print(
+        f"\n{configuration}"
+    )
 
-    agg = (
-        df.groupby("B", as_index=False)
-        .agg(
-            coop_mean=("result", "mean"),
-            coop_std=("result", "std"),
-            n=("result", "count")  
+    print(
+        sorted(
+            sub["B"].unique()
         )
+    )
+
+expected_configurations = {label for label, _ in paths}
+actual_configurations = set(df["configuration"].unique())
+
+if actual_configurations != expected_configurations:
+    raise ValueError(
+        f"Missing configurations: "
+        f"{expected_configurations - actual_configurations}"
+    )
+
+Bs_by_configuration = {
+    configuration: set(
+        df[
+            df["configuration"]
+            == configuration
+        ]["B"].round(6).unique()
+    )
+    for configuration
+    in df["configuration"].unique()
+}
+
+
+common_B = sorted(
+    set.intersection(
+        *Bs_by_configuration.values()
+    )
+)
+
+
+print(
+    "\n========================================"
+)
+print(
+    "Common B values"
+)
+print(
+    "========================================"
+)
+
+print(
+    common_B
+)
+
+
+df_common = df[
+    df["B"].round(6).isin(
+        common_B
+    )
+].copy()
+
+df_common = (
+    df_common.groupby(
+        ["configuration", "Dr", "B", "seed"],
+        as_index=False
+    )["coop"].mean()
+)
+
+print("\n========== Figure 3 Data Check ==========")
+
+for configuration, sub in df_common.groupby("configuration"):
+    print(f"\n{configuration}")
+    print(f"Total unique seeds: {sub['seed'].nunique()}")
+    print(f"Total Dr values: {sub['Dr'].nunique()}")
+    print(f"Total B values: {sub['B'].nunique()}")
+
+seed_check = (
+    df_common
+    .groupby(
+        [
+            "configuration",
+            "B",
+        ]
+    )["seed"]
+    .nunique()
+    .reset_index(
+        name="n_seeds"
+    )
+)
+
+
+print(
+    "\n========================================"
+)
+print(
+    "Seed count for every point"
+)
+print(
+    "========================================"
+)
+
+print(
+    seed_check.to_string(
+        index=False
+    )
+)
+
+agg = (
+    df_common
+    .groupby(
+        [
+            "configuration",
+            "B",
+        ]
+    )["coop"]
+    .agg(
+        mean="mean",
+        std="std",
+        n="count",
+    )
+    .reset_index()
+)
+
+agg["ci95"] = (
+    1.96
+    * agg["std"]
+    / (agg["n"] ** 0.5)
+)
+
+print(
+    "\n========================================"
+)
+print(
+    "Aggregated results"
+)
+print(
+    "========================================"
+)
+
+print(
+    agg.to_string(
+        index=False
+    )
+)
+
+plot_order = [
+    "Shared DQN, Buffer = 90000",
+    "10 Groups, Buffer = 9000",
+    "100 Groups, Buffer = 9000",
+    "100 Groups, Buffer = 900",
+]
+
+plt.figure(
+    figsize=(14, 7)
+)
+
+
+for configuration in plot_order:
+
+    sub = (
+        agg[
+            agg["configuration"]
+            == configuration
+        ]
         .sort_values("B")
     )
 
-    plt.plot(
-        agg["B"],
-        agg["coop_mean"],
-        marker="o",
-        linewidth=7,
-        markersize=16,
-        label=label,
-        zorder=3,
-    )
-    agg["coop_ci95"] = 1.96 * agg["coop_std"] / (agg["n"] ** 0.5)
+    if sub.empty:
+        print(
+            f"Warning: no data found for "
+            f"{configuration}"
+        )
+        continue
 
-    lower = (agg["coop_mean"] - agg["coop_ci95"]).clip(lower=0.0)
-    upper = (agg["coop_mean"] + agg["coop_ci95"]).clip(upper=1.0)
+    line, = plt.plot(
+        sub["B"],
+        sub["mean"],
+        marker="o",
+        label=configuration,
+        linewidth=8,
+        markersize=16,
+    )
 
     plt.fill_between(
-        agg["B"],
-        lower,
-        upper,
+        sub["B"],
+        sub["mean"] - sub["ci95"],
+        sub["mean"] + sub["ci95"],
         alpha=0.05,
-        zorder=1
+        color=line.get_color(),
     )
-    print(f"\n[{label}] n per B:")
-    print(agg[["B", "n"]].to_string(index=False))
-    print(f"[{label}] avg n across B = {agg['n'].mean():.2f}, min n = {agg['n'].min()}, max n = {agg['n'].max()}")
 
-plt.xlabel("B", fontsize=26)
-plt.ylabel("Cooperation Level", fontsize=26)
+plt.xlabel(
+    "B",
+    fontsize=32,
+)
+
+plt.ylabel(
+    "Cooperation Level",
+    fontsize=32,
+)
+
+plt.xticks(
+    fontsize=32
+)
+
+plt.yticks(
+    fontsize=32
+)
+
 plt.legend(
-    fontsize=22,
-    loc="upper left",
-    bbox_to_anchor=(1.02, 0.32),
-    borderaxespad=0.
+    fontsize=20,
+    bbox_to_anchor=(
+        1.00,
+        -0.04
+    ),
+    loc="lower left",
 )
 
 plt.tight_layout()
-plt.xticks(fontsize=26)
-plt.yticks(fontsize=26)
-plt.savefig("figure3_state_augmentation.png", dpi=300, bbox_inches="tight")
-plt.savefig("figure3_state_augmentation.pdf", bbox_inches="tight")
+
+OUTPUT_DIR = Path("figures")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+plt.savefig(
+    OUTPUT_DIR / "figure3_group_comparison.png",
+    dpi=300,
+    bbox_inches="tight"
+)
+
+plt.savefig(
+    OUTPUT_DIR / "figure3_group_comparison.pdf",
+    bbox_inches="tight"
+)
+
 plt.show()
