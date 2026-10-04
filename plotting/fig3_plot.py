@@ -342,6 +342,13 @@ marker_map = {
     "100 Groups, Buffer = 900": "s",
 }
 
+color_map = {
+    "Shared DQN, Buffer = 90000": "C0",
+    "10 Groups, Buffer = 9000": "C1",
+    "100 Groups, Buffer = 9000": "C2",
+    "100 Groups, Buffer = 900": "C3",
+}
+
 fig, axes = plt.subplots(
     1,
     2,
@@ -372,6 +379,7 @@ for configuration in plot_order:
         sub["B"],
         sub["mean"],
         marker=marker_map[configuration],
+        color=color_map[configuration],
         label=configuration,
         linewidth=8,
         markersize=15,
@@ -406,6 +414,7 @@ for configuration in grouped_plot_order:
         sub["B"],
         sub["mean"],
         marker=marker_map[configuration],
+        color=color_map[configuration],
         label=configuration,
         linewidth=8,
         markersize=15,
