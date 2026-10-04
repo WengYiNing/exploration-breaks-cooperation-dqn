@@ -329,10 +329,27 @@ plot_order = [
     "100 Groups, Buffer = 900",
 ]
 
-plt.figure(
-    figsize=(14, 7)
+grouped_plot_order = [
+    "10 Groups, Buffer = 9000",
+    "100 Groups, Buffer = 9000",
+    "100 Groups, Buffer = 900",
+]
+
+marker_map = {
+    "Shared DQN, Buffer = 90000": "o",
+    "10 Groups, Buffer = 9000": "D",
+    "100 Groups, Buffer = 9000": "^",
+    "100 Groups, Buffer = 900": "s",
+}
+
+fig, axes = plt.subplots(
+    1,
+    2,
+    figsize=(18, 7),
 )
 
+ax_full = axes[0]
+ax_grouped = axes[1]
 
 for configuration in plot_order:
 
@@ -351,48 +368,129 @@ for configuration in plot_order:
         )
         continue
 
-    line, = plt.plot(
+    line, = ax_full.plot(
         sub["B"],
         sub["mean"],
-        marker="o",
+        marker=marker_map[configuration],
         label=configuration,
         linewidth=8,
-        markersize=16,
+        markersize=15,
     )
 
-    plt.fill_between(
+    ax_full.fill_between(
         sub["B"],
         sub["mean"] - sub["ci95"],
         sub["mean"] + sub["ci95"],
-        alpha=0.05,
+        alpha=0.08,
         color=line.get_color(),
     )
 
-plt.xlabel(
+for configuration in grouped_plot_order:
+
+    sub = (
+        agg[
+            agg["configuration"]
+            == configuration
+        ]
+        .sort_values("B")
+    )
+
+    if sub.empty:
+        print(
+            f"Warning: no data found for "
+            f"{configuration}"
+        )
+        continue
+
+    line, = ax_grouped.plot(
+        sub["B"],
+        sub["mean"],
+        marker=marker_map[configuration],
+        label=configuration,
+        linewidth=8,
+        markersize=15,
+    )
+
+    ax_grouped.fill_between(
+        sub["B"],
+        sub["mean"] - sub["ci95"],
+        sub["mean"] + sub["ci95"],
+        alpha=0.08,
+        color=line.get_color(),
+    )
+
+ax_full.set_xlabel(
     "B",
-    fontsize=32,
+    fontsize=28,
+    labelpad=14,
 )
 
-plt.ylabel(
+ax_full.set_ylabel(
     "Cooperation Level",
-    fontsize=32,
+    fontsize=28,
+    labelpad=12,
 )
 
-plt.xticks(
-    fontsize=32
+ax_full.tick_params(
+    axis="both",
+    labelsize=26,
 )
 
-plt.yticks(
-    fontsize=32
+ax_full.set_ylim(
+    0,
+    0.9,
 )
 
-plt.legend(
-    fontsize=20,
-    bbox_to_anchor=(
-        1.00,
-        -0.04
-    ),
-    loc="lower left",
+ax_full.text(
+    0.02,
+    1.07,
+    "(a)",
+    transform=ax_full.transAxes,
+    fontsize=26,
+    va="top",
+    ha="left",
+)
+
+ax_grouped.set_xlabel(
+    "B",
+    fontsize=28,
+    labelpad=14,
+)
+
+ax_grouped.set_ylabel(
+    "Cooperation Level",
+    fontsize=28,
+    labelpad=12,
+)
+
+ax_grouped.tick_params(
+    axis="both",
+    labelsize=26,
+)
+
+ax_grouped.set_ylim(
+    0,
+    0.4,
+)
+
+ax_grouped.text(
+    0.02,
+    1.07,
+    "(b)",
+    transform=ax_grouped.transAxes,
+    fontsize=26,
+    va="top",
+    ha="left",
+)
+
+ax_full.legend(
+    fontsize=18,
+    loc="upper right",
+)
+
+ax_grouped.legend(
+    fontsize=18,
+    loc="upper right",
 )
 
 plt.tight_layout()
