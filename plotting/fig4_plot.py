@@ -170,13 +170,13 @@ ax.legend(
 plt.tight_layout()
 
 plt.savefig(
-    "figure3_state_augmentation.png",
+    "figure4_state_augmentation.png",
     dpi=300,
     bbox_inches="tight"
 )
 
 plt.savefig(
-    "figure3_state_augmentation.pdf",
+    "figure4_state_augmentation.pdf",
     bbox_inches="tight"
 )
 
