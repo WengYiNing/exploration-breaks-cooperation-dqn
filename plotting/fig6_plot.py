@@ -1,152 +1,255 @@
 import os
-from pathlib import Path
 import re
-from collections import defaultdict
 import numpy as np
+import torch
+import torch.nn as nn
 import matplotlib.pyplot as plt
 
-QMEAN_ROOT = Path("Figure 5 Q mean")
-QGAP_ROOT  = Path("Figure 5 Q gap")
+from umap import UMAP
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+states_dir = "states_95k_100k"
+ckpt_dir   = "checkpoints_shared"
 
 
-pattern_B = re.compile(
-    r".*_SIZE(?P<size>\d+)"
-    r"_SEED(?P<seed>\d+)"
-    r"_Dr(?P<dr>[\d.]+)"
-    r"_tauinit_[\d.]+"
-    r"_taufinal_(?P<tau_final>[\d.]+)"
-    r"_anneal_(?P<anneal>\d+)"
-    r"_B_(?P<b>[\d.]+)\.txt"
+class Net(nn.Module):
+    def __init__(self, state_dim=5, hidden_dim=96, action_dim=2):
+        super().__init__()
+        self.fc1 = nn.Linear(state_dim, hidden_dim)
+        self.relu = nn.ReLU()
+        self.fc2 = nn.Linear(hidden_dim, action_dim)
+
+    def forward_hidden(self, x):
+        h = self.relu(self.fc1(x))
+        return h
+
+    def forward(self, x):
+        h = self.forward_hidden(x)
+        q = self.fc2(h)
+        return q
+
+
+pattern = re.compile(
+    r"state_Size(?P<size>\d+)_SEED(?P<seed>\d+)_Dr(?P<dr>[\d\.]+)_tauinit_(?P<tauinit>[\d\.]+)_B_(?P<B>[\d\.]+)\.npy"
 )
 
-def load_statistics(root, label):
-    by_B = defaultdict(dict)
-    used_data = set()
+state_files = sorted(os.listdir(states_dir))
 
-    for file in root.iterdir():
-        if not file.is_file() or file.suffix != ".txt":
-            continue
+all_hidden = []
+all_B = []
+all_labels = []
+all_Q = []
 
-        m = pattern_B.fullmatch(file.name)
-        if not m:
-            continue
+for fname in state_files:
+    m = pattern.match(fname)
+    if m is None:
+        continue
 
-        size = int(m.group("size"))
-        seed = int(m.group("seed"))
-        dr = float(m.group("dr"))
-        b = float(m.group("b"))
-        tau_final = float(m.group("tau_final"))
-        anneal = int(m.group("anneal"))
+    seed    = int(m.group("seed"))
+    dr_str  = m.group("dr")
+    tau_str = m.group("tauinit")
+    B_str   = m.group("B")
+    Bv      = float(B_str)
 
-        if (size != 30 or abs(dr - 0.25) > 1e-8
-                or abs(tau_final - 0.1) > 1e-8
-                or anneal != 95000):
-            continue
+    if abs(float(dr_str) - 0.25) > 1e-8:
+        continue
 
-        try:
-            val = float(file.read_text().strip())
-        except Exception as e:
-            print(f"Warning: skipped {file}: {e}")
-            continue
+    S = np.load(os.path.join(states_dir, fname)).astype(np.float32)
+    S_t = torch.tensor(S, dtype=torch.float32)
 
-        if seed in by_B[b]:
-            if not np.isclose(by_B[b][seed], val, rtol=0, atol=1e-6):
-                raise ValueError(
-                    f"Conflicting results: B={b}, seed={seed}"
-                )
-            continue
+    ckpt_name = (
+        f"sharedDQN_SIZE30_SEED{seed}_Dr{dr_str}_tauinit_{tau_str}"
+        f"_taufinal_0.1_anneal_95000_B_{B_str}.pt"
+    )
+    ckpt_path = os.path.join(ckpt_dir, ckpt_name)
 
-        by_B[b][seed] = val
-        used_data.add((seed, dr, b))
+    if not os.path.exists(ckpt_path):
+        raise FileNotFoundError(f"Checkpoint not found: {ckpt_path}")
 
-    if not used_data:
-        raise ValueError(f"No matching data found in {root}")
+    ckpt = torch.load(ckpt_path, map_location="cpu")
 
-    print(f"\n========== {label} Data Check ==========")
-    print(f"Total unique seeds: {len({s for s, d, b in used_data})}")
-    print(f"Total Dr values: {len({d for s, d, b in used_data})}")
-    print(f"Total B values: {len({b for s, d, b in used_data})}")
+    model = Net(state_dim=S.shape[1], hidden_dim=96, action_dim=2)
+    model.load_state_dict(ckpt["model_state_dict"])
+    model.eval()
 
-    for b in sorted(by_B):
-        print(f"B={b:.6f}: {len(by_B[b])} seeds")
+    with torch.no_grad():
+        H = model.forward_hidden(S_t).numpy()
+        Q = model(S_t).numpy()
 
-    sorted_B = sorted(by_B)
-    means = [np.mean(list(by_B[b].values())) for b in sorted_B]
-    stds = [
-        np.std(list(by_B[b].values()), ddof=1)
-        for b in sorted_B
-    ]
-    ci95 = [
-        1.96 * std / np.sqrt(len(by_B[b]))
-        for b, std in zip(sorted_B, stds)
-    ]
+    actions = np.argmax(Q, axis=1)
 
-    return sorted_B, means, stds, ci95
+    all_hidden.append(H)
+    all_Q.append(Q)
+    all_B.extend([Bv] * len(H))
+    all_labels.extend(actions.tolist())
 
 
-sorted_B_qmean, mean_qmean, std_qmean, ci95_qmean = (
-    load_statistics(QMEAN_ROOT, "Q-mean")
+all_hidden = np.vstack(all_hidden)
+all_Q = np.vstack(all_Q)
+all_B = np.array(all_B)
+all_labels = np.array(all_labels)
+
+mean = all_hidden.mean(axis=0)
+std = all_hidden.std(axis=0) + 1e-6
+Z_in = (all_hidden - mean) / std
+
+unique_B_all = sorted({float(b) for b in all_B})
+sil_by_B = {}
+
+for Bv in unique_B_all:
+    idx = np.abs(all_B - Bv) < 1e-8
+    X_B = Z_in[idx]
+
+    if X_B.shape[0] < 3:
+        sil = float("nan")
+    else:
+        km = KMeans(n_clusters=2, random_state=0, n_init=10)
+        clusters = km.fit_predict(X_B)
+
+        if len(np.unique(clusters)) < 2:
+            sil = float("nan")
+        else:
+            sil = float(silhouette_score(X_B, clusters))
+
+    sil_by_B[Bv] = sil
+
+N = Z_in.shape[0]
+max_points = 3000
+
+np.random.seed(0)
+if N > max_points:
+    sub_idx = np.random.choice(N, max_points, replace=False)
+else:
+    sub_idx = np.arange(N)
+
+Z_in_sub   = Z_in[sub_idx]
+B_sub      = all_B[sub_idx]
+labels_sub = all_labels[sub_idx]
+
+umap = UMAP(
+    n_neighbors=30,
+    min_dist=0.1,
+    metric="euclidean",
+    n_components=2,
+    random_state=0,
 )
 
-sorted_B_qgap, mean_qgap, std_qgap, ci95_qgap = (
-    load_statistics(QGAP_ROOT, "Q-gap")
+Z = umap.fit_transform(Z_in_sub)
+
+unique_B = sorted(set(B_sub))
+
+fig, axes = plt.subplots(
+    2, 3,
+    figsize=(16, 8),
+    sharex="col",
+    sharey="row"
 )
 
+axes = axes.flatten()
 
-plt.figure(figsize=(12, 5))
+x_min, x_max = Z[:, 0].min(), Z[:, 0].max()
+x_max = x_max + 10
 
-ax1 = plt.subplot(1, 2, 1)
-ax1.plot(
-    sorted_B_qmean, mean_qmean,
-    marker="o", linewidth=5, color="tab:blue", markersize=11
+y_min, y_max = Z[:, 1].min(), Z[:, 1].max()
+y_min = y_min - 20
+
+pad_x = 0.05 * (x_max - x_min)
+pad_y = 0.05 * (y_max - y_min)
+
+x_min, x_max = x_min - pad_x, x_max + pad_x
+y_min, y_max = y_min - pad_y, y_max + pad_y
+
+panel_labels = ["(a)", "(b)", "(c)", "(d)", "(e)", "(f)"]
+
+for i, (Bv, plabel) in enumerate(zip(unique_B, panel_labels)):
+    ax = axes[i]
+
+    idx_B = B_sub == Bv
+    idx_C = idx_B & (labels_sub == 0)
+    idx_D = idx_B & (labels_sub == 1)
+
+    if i == 0:
+        ax.scatter(
+            Z[idx_C, 0],
+            Z[idx_C, 1],
+            s=125,
+            alpha=0.6,
+            label="Cooperate"
+        )
+        ax.scatter(
+            Z[idx_D, 0],
+            Z[idx_D, 1],
+            s=125,
+            alpha=0.6,
+            label="Defect"
+        )
+    else:
+        ax.scatter(
+            Z[idx_C, 0],
+            Z[idx_C, 1],
+            s=125,
+            alpha=0.6
+        )
+        ax.scatter(
+            Z[idx_D, 0],
+            Z[idx_D, 1],
+            s=125,
+            alpha=0.6
+        )
+
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
+
+    ax.set_title(
+        plabel,
+        loc="left",
+        x=0.0,
+        y=1.02,
+        fontsize=28
+    )
+
+    sil = sil_by_B[float(Bv)]
+    sil_label = f"B = {Bv:.3f}\nsilhouette = {sil:.3f}"
+
+    ax.text(
+        0.96,
+        0.04,
+        sil_label,
+        transform=ax.transAxes,
+        ha="right",
+        va="bottom",
+        fontsize=22,
+        bbox=dict(
+            boxstyle="round,pad=0.3",
+            facecolor="white",
+            alpha=0.75,
+            edgecolor="none"
+        )
+    )
+
+
+for ax in axes[:3]:
+    ax.tick_params(labelbottom=False)
+
+for i, ax in enumerate(axes):
+    if i % 3 != 0:
+        ax.tick_params(labelleft=False)
+
+for ax in axes:
+    ax.tick_params(axis="both", labelsize=28)
+
+
+handles, labels_ = axes[0].get_legend_handles_labels()
+
+fig.legend(
+    handles,
+    labels_,
+    loc="upper right",
+    bbox_to_anchor=(1.12, 0.26),
+    fontsize=28
 )
-ax1.fill_between(
-    sorted_B_qmean,
-    np.array(mean_qmean) - np.array(ci95_qmean),
-    np.array(mean_qmean) + np.array(ci95_qmean),
-    color="tab:blue",
-    alpha=0.08
-)
-ax1.set_ylim(0, 55)
-ax1.set_xlabel("B", fontsize=24)
-ax1.set_ylabel("Average Q-mean", fontsize=24, labelpad=10)
 
-ax2 = plt.subplot(1, 2, 2)
-ax2.plot(
-    sorted_B_qgap, mean_qgap,
-    marker="o", linewidth=5, color="tab:orange", markersize=11
-)
-ax2.fill_between(
-    sorted_B_qgap,
-    np.array(mean_qgap) - np.array(ci95_qgap),
-    np.array(mean_qgap) + np.array(ci95_qgap),
-    color="tab:orange",
-    alpha=0.08
-)
-ax2.set_ylim(0, 75)
-ax2.set_xlabel("B", fontsize=24)
-ax2.set_ylabel("Average Q-gap", fontsize=24, labelpad=10)
-
-ax1.tick_params(axis='both', labelsize=24)  
-ax2.tick_params(axis='both', labelsize=24)   
-
-ax1.text(
-    0.02, 1.1, "(a)",
-    transform=ax1.transAxes,
-    fontsize=24,
-    va="top",
-    ha="left"
-)
-
-ax2.text(
-    0.02, 1.1, "(b)",
-    transform=ax2.transAxes,
-    fontsize=24,
-    va="top",
-    ha="left"
-)
-
-plt.tight_layout()
-plt.savefig("figure5_q_statistics.png", dpi=300, bbox_inches="tight")
-plt.savefig("figure5_q_statistics.pdf", bbox_inches="tight")
+plt.tight_layout(rect=[0.0, 0.0, 0.90, 1.0])
+plt.savefig("figure6_hidden_umap.png", dpi=300, bbox_inches="tight")
 plt.show()
