@@ -50,8 +50,8 @@ def parse_result_file(path, model_name):
                 size_match = re.search(r"\bSIZE:\s*(\d+)", line, re.IGNORECASE)
                 if not np.isclose(dr, 0.25, rtol=0, atol=1e-9):
                     raise ValueError(f"{path}:{line_num}: expected Dr=0.25, got {dr}")
-                if size_match is None or int(size_match.group(1)) != 100:
-                    raise ValueError(f"{path}:{line_num}: expected SIZE: 100 (10 x 10 lattice)")
+                if size_match is None or int(size_match.group(1)) not in (10, 100):
+                    raise ValueError(f"{path}:{line_num}: expected a 10 x 10 lattice")
 
                 rows.append({
                     'model': model_name,

@@ -353,7 +353,7 @@ def sweep_Dr(
     if seed_values is None:
         seed_values = list(range(195, 210))
     if tau_init_values is None:
-        tau_init_values = [0.100, 0.193, 0.260, 0.327, 0.393, 0.460, 0.527, 0.593, 0.660, 0.727, 0.793]
+        tau_init_values = [0.100, 0.127, 0.193, 0.260, 0.327, 0.393, 0.460, 0.527, 0.593, 0.660, 0.727, 0.793]
     if anneal_steps is None:
         anneal_steps = [95000]
 
